@@ -28,8 +28,6 @@ class EvolutionaryForestRegressorPlus(EvolutionaryForestRegressor):
         super().lazy_init(x)
 
         self.toolbox.register("expr", gp.genHalfAndHalf, pset=self.pset, min_=0, max_=8)
-        # self.pset.addPrimitive(np.sin, 1)
-        # self.pset.addPrimitive(np.tanh, 1)
         self.toolbox.register("mate", partial(cxOnePoint_multiple_all_gene, probability=self.cross_pb))
         self.toolbox.register("mutate", partial(mutate_all_gene,
                                                 expr=self.toolbox.expr_mut, pset=self.pset,

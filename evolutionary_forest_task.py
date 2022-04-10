@@ -14,9 +14,9 @@ from utils.notify_utils import notify
 
 
 ef = EvolutionaryForestRegressorPlus(max_height=8, normalize=False, select='Tournament-7',
-                                     gene_num=10, boost_size=100, n_gen=50, n_pop=200,
-                                     cross_pb=0.5, mutation_pb=0.05,
-                                     base_learner='Random-DT', verbose=True, n_process=0,
+                                     gene_num=20, boost_size=100, n_gen=50, n_pop=200,
+                                     cross_pb=0.9, mutation_pb=0.1,
+                                     base_learner='DT', verbose=True, n_process=0,
                                      original_features=True)
 
 
