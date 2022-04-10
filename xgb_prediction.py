@@ -24,7 +24,7 @@ from utils.learning_utils import sklearn_tuner, kendalltau
 os.environ['OMP_NUM_THREADS'] = "4"
 os.environ['MKL_NUM_THREADS'] = "4"
 os.environ['NUMEXPR_NUM_THREADS'] = "4"
-use_xgboost = True
+use_xgboost = False
 
 xgb_search_space = [
     {'name': 'booster', 'type': 'cat', 'categories': ['gbtree', 'dart', 'gblinear']},
@@ -149,7 +149,7 @@ def tuning_task(tuning=True):
             """
             search_space = xgb_search_space if use_xgboost else catboost_params
             best_parameter = sklearn_tuner(core_class, search_space, X_all_k, Y_all_k, metric=kendalltau,
-                                           max_iter=16)
+                                           max_iter=8)
             print(best_parameter)
             print('XGBRanker', np.mean(cross_val_score(core_class(**best_parameter),
                                                        X_all_k, Y_all_k,
@@ -224,5 +224,5 @@ def data_print(keys, prediction_results):
 """
 
 if __name__ == '__main__':
-    tuning_task(tuning=False)
+    tuning_task(tuning=True)
     # simple_cv_task(custom_fe=False)

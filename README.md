@@ -2,6 +2,9 @@
 ### 竞赛链接
 https://aistudio.baidu.com/aistudio/competition/detail/150/0/introduction
 
+### 当前思路
+* 基于XGBoost调参
+
 ### 文档
 * base_component: 该文件夹包括了一些可行的算法
   * Bagging
