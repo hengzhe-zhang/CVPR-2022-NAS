@@ -1,10 +1,11 @@
 import itertools
+
 import numpy as np
-
+from numba import njit
 from sklearn import svm
-from sklearn.base import RegressorMixin
 
 
+# @njit(cache=True)
 def transform_pairwise(X, y):
     """Transforms data into pairs with balanced labels for ranking
     Transforms a n-class ranking problem into a two-class classification
@@ -47,7 +48,7 @@ def transform_pairwise(X, y):
     return np.asarray(X_new), np.asarray(y_new).ravel()
 
 
-class RankSVM(RegressorMixin, svm.LinearSVC):
+class RankSVM(svm.LinearSVC):
     """Performs pairwise ranking with an underlying LinearSVC model
     Input should be a n-class ranking problem, this object will convert it
     into a two-class classification problem, a setting known as
@@ -70,16 +71,10 @@ class RankSVM(RegressorMixin, svm.LinearSVC):
         super(RankSVM, self).fit(X_trans, y_trans)
         return self
 
-    def decision_function(self, X):
-        return np.dot(X, self.coef_.ravel())
-
     def predict(self, X):
         """
         Predict an ordering on X. For a list of n samples, this method
         returns a list from 0 to n-1 with the relative order of the rows of X.
-        The item is given such that items ranked on top have are
-        predicted a higher ordering (i.e. 0 means is the last item
-        and n_samples would be the item ranked on top).
         Parameters
         ----------
         X : array, shape (n_samples, n_features)
@@ -90,7 +85,7 @@ class RankSVM(RegressorMixin, svm.LinearSVC):
             the rows in X.
         """
         if hasattr(self, 'coef_'):
-            return np.argsort(np.dot(X, self.coef_.ravel()))
+            return np.argsort(np.dot(X, self.coef_.flatten()))
         else:
             raise ValueError("Must call fit() prior to predict()")
 

@@ -12,6 +12,7 @@ https://aistudio.baidu.com/aistudio/competition/detail/150/0/introduction
   * Rank Decision Tree（尚未完成）
   * MTL Decision Tree （尚未完成）
 * utils: 工具类
+* xgb_prediction: 基于XGBoost的训练框架
 
 ### 潜在可行的思路
 * 集成学习

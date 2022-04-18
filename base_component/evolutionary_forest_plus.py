@@ -2,8 +2,10 @@ import operator
 from functools import partial
 
 from deap import gp
-from evolutionary_forest.forest import EvolutionaryForestRegressor, spearman
+from evolutionary_forest.forest import EvolutionaryForestRegressor
 from evolutionary_forest.multigene_gp import *
+
+from utils.learning_utils import kendalltau
 
 
 def cxOnePoint_multiple_all_gene(ind1: MultipleGeneGP, ind2: MultipleGeneGP, probability):
@@ -26,7 +28,9 @@ class EvolutionaryForestRegressorPlus(EvolutionaryForestRegressor):
 
     def lazy_init(self, x):
         super().lazy_init(x)
-
+        del self.pset.context['analytical_quotient']
+        self.pset.prims_count -= 1
+        self.pset.primitives[object].pop(-1)
         self.toolbox.register("expr", gp.genHalfAndHalf, pset=self.pset, min_=0, max_=8)
         self.toolbox.register("mate", partial(cxOnePoint_multiple_all_gene, probability=self.cross_pb))
         self.toolbox.register("mutate", partial(mutate_all_gene,
@@ -38,9 +42,11 @@ class EvolutionaryForestRegressorPlus(EvolutionaryForestRegressor):
                                                                   max_value=self.max_height))
         self.cross_pb = 1
         self.mutation_pb = 1
+        # 需要重新生成特征
+        self.pop = self.toolbox.population(n=self.n_pop)
 
     def calculate_fitness_value(self, individual, Y, y_pred):
         # 评估函数定义
-        if np.isnan(spearman(Y, y_pred)):
+        if np.isnan(kendalltau(Y, y_pred)):
             return 1,
-        return -1 * spearman(Y, y_pred),
+        return -1 * kendalltau(Y, y_pred),
