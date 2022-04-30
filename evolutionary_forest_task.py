@@ -1,35 +1,29 @@
 # 基于演化森林构造特征
 import dill
+from catboost import Pool
 from evolutionary_forest.utils import get_feature_importance, plot_feature_importance
+from sklearn.datasets import load_boston
 from xgboost import XGBRegressor
 
 from base_component.evolutionary_forest_plus import EvolutionaryForestRegressorPlus
 from dataset_loader import *
 from utils.notify_utils import notify
+from xgb_prediction import CatBoostPairwiseRanker
 
-pairwise_xgb = XGBRegressor(n_estimators=100, max_depth=1, objective='rank:pairwise', n_jobs=1,
-                            learning_rate=0.8)
-#
-# xgb_search_space = [
-#     {'name': 'select', 'type': 'cat', 'categories': ['Tournament-7', 'AutomaticLexicase']},
-# ]
-
+pairwise_xgb = CatBoostPairwiseRanker(n_estimators=30, max_depth=1, loss_function='PairLogit',
+                                      thread_count=1, learning_rate=0.9, verbose=False)
 
 ef = EvolutionaryForestRegressorPlus(max_height=8, normalize=False, select='Tournament-7',
-                                     gene_num=20, boost_size=10, n_gen=200, n_pop=200,
+                                     gene_num=3, boost_size=10, n_gen=10, n_pop=100,
                                      cross_pb=0.9, mutation_pb=0.1,
                                      # base_learner='Random-DT',
                                      base_learner=pairwise_xgb,
-                                     verbose=True, n_process=64,
-                                     original_features=False)
+                                     verbose=True, n_process=60,
+                                     original_features=True)
 
 
 @notify
 def feature_construction():
-    # 所有数据联合训练
-    # X_all_k, Y_all_k = np.array(arch_list_train).repeat(8, axis=0), \
-    #                    np.concatenate([train_list[i] for i in range(len(train_list))])
-    # X_all_k = np.concatenate([X_all_k, np.arange(0, len(X_all_k)).reshape(-1, 1) // len(arch_list_train)], axis=1)
     for i in range(0, 8):
         X_all_k, Y_all_k = arch_list_train, np.array(train_list[i])
         ef.fit(X_all_k, Y_all_k)
@@ -45,3 +39,6 @@ def feature_construction():
 
 if __name__ == '__main__':
     feature_construction()
+    # X, y = load_boston(return_X_y=True)
+    # pairwise_xgb.fit(X, y)
+    # print(pairwise_xgb.get_feature_importance(Pool(X)))

@@ -1,4 +1,5 @@
 import gc
+import os
 from typing import Callable
 
 import numpy as np
@@ -58,7 +59,7 @@ def sklearn_tuner(
     """
     基于HEBO的调参工具类
     """
-    n_suggestions = 12
+    n_suggestions = (os.cpu_count() - 8) // n_splits
     ray.init(num_cpus=n_suggestions, _node_ip_address='127.0.0.1')
     pool = ProcessingPool(n_suggestions)
     space = DesignSpace().parse(space_config)
@@ -72,11 +73,9 @@ def sklearn_tuner(
         rec = opt.suggest(n_suggestions=n_suggestions)
         sign = -1. if greater_is_better else 1.0
         # 贝叶斯优化
-        # scores = pool.map(simple_cross_validation, [(X, y, model_class, r[1].to_dict(), metric, n_splits)
-        #                                             for r in rec.iterrows()])
-        scores = ray.get([simple_cross_validation.remote(X_id, y_id, model_class, r[1].to_dict(), metric, n_splits)
+        scores = ray.get([simple_cross_validation.remote(X_id, y_id, model_class, r[1].to_dict(), metric, n_splits,
+                                                         multi_objective)
                           for r in rec.iterrows()])
-        # score_v = score_evaluation(model, X, y)
         opt.observe(rec, sign * np.array(scores))
         print('Iter %d, best metric: %g' % (i, sign * opt.y.min()))
     pool.close()
@@ -97,23 +96,25 @@ def sklearn_tuner(
 
 
 @ray.remote
-def simple_cross_validation(X, y, model_class, parameter, metric, n_splits):
+def simple_cross_validation(X, y, model_class, parameter, metric, n_splits, multi_objective=False):
     """
     调参交叉验证工具类
     """
     # print('start single task!')
     # X, y, model_class, parameter, metric, n_splits = parameters
     all_score = []
-    model = model_class(verbosity=0, **parameter)
+    model = model_class(**parameter)
     # pred = cross_val_predict(model, X, y, cv=KFold(n_splits=n_splits, shuffle=True), n_jobs=-1)
     # # Warning: 不同Batch的结果不可比
     # score_v = np.nan_to_num(metric(y, pred))
-    score_v = cross_val_score(model, X, y, cv=KFold(shuffle=True), n_jobs=n_splits,
+    score_v = cross_val_score(model, X, y, cv=KFold(n_splits=n_splits, shuffle=True), n_jobs=n_splits,
                               scoring=make_scorer(kendalltau))
     all_score.append(np.mean(score_v))
     gc.collect()
-    # return np.mean(score_v)
-    return score_v
+    if multi_objective:
+        return score_v
+    else:
+        return np.mean(score_v)
 
 
 if __name__ == '__main__':

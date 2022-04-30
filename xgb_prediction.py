@@ -2,27 +2,36 @@ import copy
 import os
 
 import dill
+import numpy as np
+import ray
 from catboost import CatBoostRanker
 from evolutionary_forest.forest import EvolutionaryForestRegressor
 from evolutionary_forest.utils import get_feature_importance, feature_append
+from gplearn.genetic import SymbolicRegressor, SymbolicTransformer
 from lightgbm import LGBMRanker
 from scipy.stats import rankdata
+from sklearn.base import RegressorMixin
 from sklearn.decomposition import PCA
-from sklearn.ensemble import VotingRegressor
+from sklearn.ensemble import VotingRegressor, BaggingRegressor
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import make_scorer
 from sklearn.model_selection import cross_val_score, KFold, cross_val_predict
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.svm import SVR
 from xgboost import XGBRegressor, XGBRanker
 
+from base_component.RankNet import RankNetRanker
 from dataset_loader import *
 # 加载训练集
-from hyperparameters import history_best_parameters
+from hyperparameters import history_best_parameters, history_best_parameters_catboost
 from utils.learning_utils import sklearn_tuner, kendalltau
 from utils.notify_utils import notify
 
-os.environ['OMP_NUM_THREADS'] = "4"
-os.environ['MKL_NUM_THREADS'] = "4"
-os.environ['NUMEXPR_NUM_THREADS'] = "4"
-use_xgboost = True
+os.environ['OMP_NUM_THREADS'] = "1"
+os.environ['MKL_NUM_THREADS'] = "1"
+os.environ['NUMEXPR_NUM_THREADS'] = "1"
+use_xgboost = False
 
 xgb_search_space = [
     {'name': 'booster', 'type': 'cat', 'categories': ['gbtree', 'dart']},
@@ -50,12 +59,16 @@ xgb_search_space = [
 ]
 
 catboost_params = [
-    {'name': 'depth', 'type': 'int', 'lb': 1, 'ub': 10},
-    {'name': 'iterations', 'type': 'int', 'lb': 10, 'ub': 1000},
+    {'name': 'depth', 'type': 'int', 'lb': 1, 'ub': 5},
+    {'name': 'iterations', 'type': 'int', 'lb': 100, 'ub': 1000},
     {'name': 'learning_rate', 'type': 'pow', 'lb': 1e-3, 'ub': 1},
     {'name': 'l2_leaf_reg', 'type': 'pow', 'lb': 1e-6, 'ub': 1e3},
-    {'name': 'loss_function', 'type': 'cat', 'categories': ['PairLogit', 'PairLogitPairwise',
-                                                            'YetiRank']},
+    {'name': 'bagging_temperature', 'type': 'num', 'lb': 0.02, 'ub': 3},
+    {'name': 'random_strength', 'type': 'pow', 'lb': 1e-6, 'ub': 1e3},
+    # {'name': 'subsample', 'type': 'num', 'lb': 0.5, 'ub': 1},
+    {'name': 'loss_function', 'type': 'cat', 'categories': ['PairLogit']},
+    # {'name': 'loss_function', 'type': 'cat', 'categories': ['YetiRank']},
+    # {'name': 'loss_function', 'type': 'cat', 'categories': ['RMSE']},
     {'name': 'thread_count', 'type': 'cat', 'categories': [1]},
     {'name': 'verbose', 'type': 'cat', 'categories': [False]},
 ]
@@ -67,14 +80,42 @@ catboost_params = [
 """
 
 
-class CatBoostPairwiseRanker(CatBoostRanker):
+class GPLTR(RegressorMixin, SymbolicTransformer):
+    def predict(self, X):
+        return np.mean(rankdata(-1 * self.transform(X), axis=0), axis=1)
+
+
+class CatBoostPairwiseRanker(RegressorMixin, CatBoostRanker):
 
     def fit(self, X, y=None, group_id=None, **kwargs):
-        group_id = np.ones_like(y)
+        group_id = np.ones_like(y).astype(int)
+        self._loss_value_change = np.ones(X.shape[1])
         return super().fit(X, y, group_id, **kwargs)
 
     def predict(self, X, **kwargs):
         return super().predict(X, **kwargs)
+
+
+class SemiCatBoost(CatBoostPairwiseRanker):
+    def fit(self, X, y=None, group_id=None, **kwargs):
+        iteration = 2
+        sample_size = 100
+        unlabeled_index = y == -1
+        y = y.astype(float)
+        X_labeled = X[~unlabeled_index]
+        y_labeled = y[~unlabeled_index]
+        super().fit(X_labeled, y_labeled, group_id, **kwargs)
+        for it in range(iteration):
+            print('Iteration', it)
+            index = np.random.choice(np.arange(0, len(X))[unlabeled_index], sample_size)
+            unlabeled_index[index] = 0
+            X_labeled = X[~unlabeled_index]
+            y[~unlabeled_index] = super().predict(X_labeled)
+            # 新生成的数据
+            y_labeled = y[~unlabeled_index]
+            print('Y Label length', len(y_labeled))
+            super().fit(X_labeled, y_labeled, group_id, **kwargs)
+        return self
 
 
 class LGBMPairwiseRanker(LGBMRanker):
@@ -92,9 +133,10 @@ def simple_cv_task(fe=False, custom_fe=False, final_prediction=True):
     """
     交叉验证测试
     """
+    core_class = XGBRegressor if use_xgboost else CatBoostPairwiseRanker
     # 特征构造之后平均分 0.7511313131313132
     # 平均分 0.7517373737373738
-    ef = EvolutionaryForestRegressor(max_height=5, normalize=True, select='AutomaticLexicase',
+    ef = EvolutionaryForestRegressor(max_height=5, normalize=False, select='AutomaticLexicase',
                                      gene_num=10, boost_size=100, n_gen=20, n_pop=200, cross_pb=1,
                                      base_learner='Random-DT', verbose=True, n_process=1)
     # 这个任务主要用来计算平均分数
@@ -102,12 +144,13 @@ def simple_cv_task(fe=False, custom_fe=False, final_prediction=True):
     prediction_results = []
     for i in range(len(train_list[:])):
         X_all_k, Y_all_k = np.array(arch_list_train), np.array(train_list[i])
-        top_features = 50
+        top_features = 30
 
         if custom_fe:
             data = [X_all_k, PCA(n_components=5).fit_transform(X_all_k)]
             X_all_k = np.concatenate(data, axis=1)
         if fe:
+            # 初始化EF
             ef.lazy_init(X_all_k)
             with open(f'model_{i}.pkl', 'rb') as f:
                 ef = dill.load(f)
@@ -115,12 +158,10 @@ def simple_cv_task(fe=False, custom_fe=False, final_prediction=True):
             print('number of features', len(code_importance_dict))
             X_all_k = feature_append(ef, X_all_k,
                                      list(code_importance_dict.keys())[:top_features],
-                                     only_new_features=True)
+                                     only_new_features=False)
         # BaggingRegressor(XGBRegressor(**history_best_parameters[i]), n_jobs=-1).fit(X_all_k, Y_all_k).predict(X_all_k)
         score = np.mean(cross_val_score(
-            # XGBRegressor(**history_best_parameters['A'][i]),
-            XGBRegressor(n_estimators=100, max_depth=1, objective='rank:pairwise', n_jobs=1,
-                         learning_rate=0.8),
+            core_class(**history_best_parameters_catboost[i]),
             X_all_k, Y_all_k, cv=KFold(shuffle=True),
             scoring=make_scorer(kendalltau), n_jobs=-1))
         print('XGBRanker', score)
@@ -128,15 +169,13 @@ def simple_cv_task(fe=False, custom_fe=False, final_prediction=True):
 
         if final_prediction:
             # 最终预测
-            # xgb = XGBRegressor(**history_best_parameters['A'][i])
-            xgb = XGBRegressor(n_estimators=100, max_depth=1, objective='rank:pairwise', n_jobs=1,
-                               learning_rate=0.8)
+            xgb = core_class(**history_best_parameters_catboost[i])
             test_data_np = np.array(test_arch_list)
             xgb.fit(X_all_k, Y_all_k)
             if fe:
                 test_data_np = feature_append(ef, test_data_np,
                                               list(code_importance_dict.keys())[:top_features],
-                                              only_new_features=True)
+                                              only_new_features=False)
             prediction = xgb.predict(test_data_np)
             prediction_results.append(prediction)
     print('平均分', np.mean(scores))
@@ -164,7 +203,7 @@ def ef_prediction():
 
 
 @notify
-def tuning_task(tuning=True):
+def tuning_task(tuning=True, semi_supervised=False):
     """
     调参+输出结果
     """
@@ -186,15 +225,17 @@ def tuning_task(tuning=True):
                         for id, parameter in enumerate(parameters)]
 
             search_space = xgb_search_space if use_xgboost else catboost_params
+            multi_objective = False
             best_parameter = sklearn_tuner(core_class, search_space, X_all_k, Y_all_k,
                                            metric=kendalltau,
-                                           max_iter=16)
+                                           max_iter=12, multi_objective=multi_objective)
             print(best_parameter)
-            model = VotingRegressor(parameters_to_xgb(best_parameter))
-            # model = core_class(**best_parameter)
-            print('XGBRanker', np.mean(cross_val_score(model,
-                                                       X_all_k, Y_all_k,
-                                                       scoring=make_scorer(kendalltau), n_jobs=-1)))
+            if multi_objective:
+                model = VotingRegressor(parameters_to_xgb(best_parameter))
+            else:
+                model = core_class(**best_parameter)
+            print('XGBRanker', np.mean(cross_val_score(model, X_all_k, Y_all_k,
+                                                       scoring=make_scorer(kendalltau), n_jobs=5)))
             xgb = model.fit(X_all_k, Y_all_k)
         else:
             """
@@ -208,23 +249,31 @@ def tuning_task(tuning=True):
             离线平均分 -0.00927655310621242
             很明显不能增强模型性能
             """
-            temp_parameter = copy.deepcopy(history_best_parameters)
-            # base = VotingRegressor(
-            #     [
-            #         (f'{xx}', XGBRegressor(**history_best_parameters[xx][i]))
-            #         for xx in ['A', 'B', 'C', 'D']
-            #     ],
-            # )
-            monotone_constraints = tuple([1 for _ in range(X_all_k.shape[1])])
-            base = XGBRegressor(monotone_constraints=monotone_constraints, **history_best_parameters['A'][i])
-            cv_prediction = cross_val_predict(base, X_all_k, Y_all_k, n_jobs=-1)
-            mean_score = kendalltau(cv_prediction, Y_all_k)
-            # score = cross_val_score(base, X_all_k, Y_all_k,
-            #                         scoring=make_scorer(kendalltau))
-            # mean_score = np.mean(score)
+            if semi_supervised:
+                X_all_k = np.concatenate([X_all_k, np.array(test_arch_list)], axis=0)
+                Y_all_k = np.concatenate([Y_all_k, np.full(test_arch_list.shape[0], -1)], axis=0)
+            parameter = history_best_parameters_catboost[i]
+            # base = core_class(**parameter)
+            # base = RankNetRanker()
+            base = GPLTR(n_components=1, metric='spearman',
+                         function_set=('add', 'sub', 'mul', 'div', 'sqrt', 'log', 'max', 'min', 'abs'))
+            # ### 非常精细的调参
+            # if i in [2, 3, 5, 6]:
+            #     base = core_class(**parameter)
+            # else:
+            #     base = VotingRegressor([
+            #         ('A', core_class(**parameter)),
+            #         ('B', XGBRegressor(**history_best_parameters['A'][i])),
+            #     ])
+            if semi_supervised:
+                mean_score = semi_supervised_score_evaluation(base, X_all_k, Y_all_k)
+            else:
+                cv_prediction = cross_val_predict(base, X_all_k, Y_all_k, cv=KFold(shuffle=True), n_jobs=5)
+                mean_score = kendalltau(cv_prediction, Y_all_k)
             scores.append(mean_score)
             print('XGBRanker', mean_score)
             xgb = base.fit(X_all_k, Y_all_k)
+        # 预测未知值
         prediction = xgb.predict(np.array(test_arch_list))
         prediction_results.append(prediction)
     print(np.mean(np.array(scores)))
@@ -285,6 +334,16 @@ def data_print(keys, prediction_results):
 任务 0.9096565656565657
 任务 0.7925656565656566
 总分 0.7806464646464647
+
+CatBoost结果
+任务 0.2627070707070708
+任务 0.864969696969697
+任务 0.8975353535353537
+任务 0.9600000000000002
+任务 0.8905050505050507
+任务 0.6655353535353535
+任务 0.9155555555555559
+任务 0.7915959595959596
 """
 
 
@@ -300,6 +359,30 @@ def joint_training_task():
     group_id = np.repeat(np.arange(8), len(arch_list_train))
     # np.concatenate([x, group_id.reshape(-1, 1)], axis=1)
     print(score_evaluation(XGBRanker(max_depth=1, n_jobs=1), x, y, group_id))
+
+
+def semi_supervised_score_evaluation(model, X_all_k, Y_all_k):
+    """
+    交叉验证评估工具类
+    此处交叉验证的思路为：将所有任务的数据合并在一起，通过GBDT进行联合训练
+    很明显的一个问题是，不同任务存在冲突情况
+    """
+    scores = []
+    X_id = ray.put(X_all_k)
+    y_id = ray.put(Y_all_k)
+    score = ray.get([single_fold.remote(model, id, X_id, y_id)
+                     for id in KFold(5, shuffle=True).split(X_all_k)])
+    scores.append(score)
+    return np.mean(np.array(scores))
+
+
+@ray.remote
+def single_fold(model, id, X_all_k, Y_all_k):
+    train_id, test_id = id
+    ranker = model.fit(X_all_k[train_id], Y_all_k[train_id])
+    index = Y_all_k[test_id] != -1
+    score = kendalltau(Y_all_k[test_id][index], ranker.predict(X_all_k[test_id][index]))
+    return score
 
 
 def score_evaluation(model, X_all_k, Y_all_k, qid_all):
@@ -321,9 +404,13 @@ def score_evaluation(model, X_all_k, Y_all_k, qid_all):
     return np.mean(np.array(scores))
 
 
+"""
+尝试使用不同的Loss Function，随后进行集成
+"""
+
 if __name__ == '__main__':
-    # tuning_task(tuning=False)
-    tuning_task(tuning=True)
+    tuning_task(tuning=False)
+    # tuning_task(tuning=True)
     # simple_cv_task(fe=True)
     # ef_prediction()
     # joint_training_task()
