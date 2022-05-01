@@ -1,11 +1,10 @@
 import itertools
 
 import numpy as np
-from numba import njit
 from sklearn import svm
+from sklearn.base import RegressorMixin
 
 
-# @njit(cache=True)
 def transform_pairwise(X, y):
     """Transforms data into pairs with balanced labels for ranking
     Transforms a n-class ranking problem into a two-class classification
@@ -48,7 +47,7 @@ def transform_pairwise(X, y):
     return np.asarray(X_new), np.asarray(y_new).ravel()
 
 
-class RankSVM(svm.LinearSVC):
+class RankSVM(RegressorMixin, svm.LinearSVC):
     """Performs pairwise ranking with an underlying LinearSVC model
     Input should be a n-class ranking problem, this object will convert it
     into a two-class classification problem, a setting known as

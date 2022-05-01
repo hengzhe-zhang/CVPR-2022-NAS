@@ -16,12 +16,17 @@ from sklearn.ensemble import VotingRegressor, BaggingRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import make_scorer
 from sklearn.model_selection import cross_val_score, KFold, cross_val_predict
+from sklearn.neighbors import KNeighborsRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.svm import SVR
 from xgboost import XGBRegressor, XGBRanker
 
+from base_component import XGBCatStacking
+from base_component.KNN_LTR import KNNLTR
+
 from base_component.RankNet import RankNetRanker
+from base_component.XGBCatStacking import CatBoostPairwiseRanker, XCSkatingRanker
 from dataset_loader import *
 # 加载训练集
 from hyperparameters import history_best_parameters, history_best_parameters_catboost
@@ -31,7 +36,8 @@ from utils.notify_utils import notify
 os.environ['OMP_NUM_THREADS'] = "1"
 os.environ['MKL_NUM_THREADS'] = "1"
 os.environ['NUMEXPR_NUM_THREADS'] = "1"
-use_xgboost = False
+# use_xgboost = 'XGB'
+use_xgboost = 'XC'
 
 xgb_search_space = [
     {'name': 'booster', 'type': 'cat', 'categories': ['gbtree', 'dart']},
@@ -73,6 +79,23 @@ catboost_params = [
     {'name': 'verbose', 'type': 'cat', 'categories': [False]},
 ]
 
+xc_params = [
+    {'name': 'XGB_booster', 'type': 'cat', 'categories': ['gbtree', 'dart']},
+    {'name': 'XGB_n_estimators', 'type': 'int', 'lb': 10, 'ub': 1000},
+    {'name': 'XGB_reg_lambda', 'type': 'pow', 'lb': 1e-6, 'ub': 1e3},
+    {'name': 'XGB_alpha', 'type': 'pow', 'lb': 1e-6, 'ub': 1e2},
+    {'name': 'XGB_gamma', 'type': 'num', 'lb': 0, 'ub': 0.5},
+    {'name': 'XGB_min_child_weight', 'type': 'num', 'lb': 0, 'ub': 10},
+    {'name': 'XGB_eta', 'type': 'pow', 'lb': 1e-8, 'ub': 1},
+    {'name': 'XGB_max_depth', 'type': 'int', 'lb': 1, 'ub': 3},
+    {'name': 'XGB_objective', 'type': 'cat', 'categories': ['rank:pairwise']},
+    {'name': 'Cat_depth', 'type': 'int', 'lb': 1, 'ub': 5},
+    {'name': 'Cat_iterations', 'type': 'int', 'lb': 100, 'ub': 1000},
+    {'name': 'Cat_learning_rate', 'type': 'pow', 'lb': 1e-3, 'ub': 1},
+    {'name': 'Cat_l2_leaf_reg', 'type': 'pow', 'lb': 1e-6, 'ub': 1e3},
+    {'name': 'Cat_loss_function', 'type': 'cat', 'categories': ['PairLogit']},
+]
+
 """
 超参数搜索结果
 基准平均分 0.77589898989899
@@ -83,17 +106,6 @@ catboost_params = [
 class GPLTR(RegressorMixin, SymbolicTransformer):
     def predict(self, X):
         return np.mean(rankdata(-1 * self.transform(X), axis=0), axis=1)
-
-
-class CatBoostPairwiseRanker(RegressorMixin, CatBoostRanker):
-
-    def fit(self, X, y=None, group_id=None, **kwargs):
-        group_id = np.ones_like(y).astype(int)
-        self._loss_value_change = np.ones(X.shape[1])
-        return super().fit(X, y, group_id, **kwargs)
-
-    def predict(self, X, **kwargs):
-        return super().predict(X, **kwargs)
 
 
 class SemiCatBoost(CatBoostPairwiseRanker):
@@ -212,7 +224,11 @@ def tuning_task(tuning=True, semi_supervised=False):
     scores = []
     for i in range(len(train_list[:])):
         X_all_k, Y_all_k = np.array(arch_list_train), np.array(train_list[i])
-        core_class = XGBRegressor if use_xgboost else CatBoostPairwiseRanker
+        core_class = {
+            'XGB': XGBRegressor,
+            'Cat': CatBoostPairwiseRanker,
+            'XC': XCSkatingRanker,
+        }[use_xgboost]
         if tuning:
             """
             目前来看，调参效果最好，收益最大
@@ -224,11 +240,15 @@ def tuning_task(tuning=True, semi_supervised=False):
                 return [(f'{id}', core_class(**parameter))
                         for id, parameter in enumerate(parameters)]
 
-            search_space = xgb_search_space if use_xgboost else catboost_params
+            search_space = {
+                'XGB': xgb_search_space,
+                'Cat': catboost_params,
+                'XC': xc_params,
+            }[use_xgboost]
             multi_objective = False
             best_parameter = sklearn_tuner(core_class, search_space, X_all_k, Y_all_k,
                                            metric=kendalltau,
-                                           max_iter=12, multi_objective=multi_objective)
+                                           max_iter=5, multi_objective=multi_objective)
             print(best_parameter)
             if multi_objective:
                 model = VotingRegressor(parameters_to_xgb(best_parameter))
@@ -255,8 +275,9 @@ def tuning_task(tuning=True, semi_supervised=False):
             parameter = history_best_parameters_catboost[i]
             # base = core_class(**parameter)
             # base = RankNetRanker()
-            base = GPLTR(n_components=1, metric='spearman',
-                         function_set=('add', 'sub', 'mul', 'div', 'sqrt', 'log', 'max', 'min', 'abs'))
+            # base = GPLTR(n_components=1, metric='spearman',
+            #              function_set=('add', 'sub', 'mul', 'div', 'sqrt', 'log', 'max', 'min', 'abs'))
+            base = RankNetRanker()
             # ### 非常精细的调参
             # if i in [2, 3, 5, 6]:
             #     base = core_class(**parameter)
@@ -268,8 +289,8 @@ def tuning_task(tuning=True, semi_supervised=False):
             if semi_supervised:
                 mean_score = semi_supervised_score_evaluation(base, X_all_k, Y_all_k)
             else:
-                cv_prediction = cross_val_predict(base, X_all_k, Y_all_k, cv=KFold(shuffle=True), n_jobs=5)
-                mean_score = kendalltau(cv_prediction, Y_all_k)
+                cv_prediction = cross_val_score(base, X_all_k, Y_all_k, cv=KFold(shuffle=True), n_jobs=5)
+                mean_score = np.mean(cv_prediction)
             scores.append(mean_score)
             print('XGBRanker', mean_score)
             xgb = base.fit(X_all_k, Y_all_k)
@@ -409,8 +430,8 @@ def score_evaluation(model, X_all_k, Y_all_k, qid_all):
 """
 
 if __name__ == '__main__':
-    tuning_task(tuning=False)
-    # tuning_task(tuning=True)
+    # tuning_task(tuning=False)
+    tuning_task(tuning=True)
     # simple_cv_task(fe=True)
     # ef_prediction()
     # joint_training_task()

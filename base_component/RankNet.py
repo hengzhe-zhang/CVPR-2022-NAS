@@ -7,6 +7,7 @@ from evolutionary_forest.forest import spearman
 from sklearn.base import RegressorMixin, BaseEstimator
 from sklearn.datasets import make_regression
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 from skorch import NeuralNetRegressor
 from skorch.callbacks import EarlyStopping
 from torch import nn, Tensor
@@ -19,15 +20,18 @@ class ClassifierModule(nn.Module):
             input_dim,
             hidden_dim=16,
             output_dim=1,
-            dropout=0.5,
+            dropout=0.75,
     ):
         super(ClassifierModule, self).__init__()
         self.dropout = nn.Dropout(dropout)
         self.hidden = nn.Linear(input_dim, hidden_dim)
+        self.hidden2 = nn.Linear(hidden_dim, hidden_dim)
         self.output = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, X, **kwargs):
         X = F.relu(self.hidden(X))
+        X = self.dropout(X)
+        X = F.relu(self.hidden2(X))
         X = self.dropout(X)
         X = self.output(X).squeeze(-1)
         return X
@@ -61,6 +65,10 @@ class RankNetRanker(BaseEstimator, RegressorMixin):
     def fit(self, X, y):
         X = X.astype(np.float32)
         y = y.astype(np.float32).reshape(-1, 1)
+        self.std = StandardScaler()
+        self.std.fit(X)
+        X = self.std.transform(X)
+        y = StandardScaler().fit_transform(y)
         net = NeuralNetRegressor(
             ClassifierModule,
             max_epochs=200,
@@ -70,7 +78,7 @@ class RankNetRanker(BaseEstimator, RegressorMixin):
             optimizer=torch.optim.Adam,
             callbacks=[EarlyStopping(patience=50)],
             module__input_dim=X.shape[1],
-            verbose=False
+            verbose=True
         )
         net.fit(X, y)
         self.net = net
@@ -78,6 +86,7 @@ class RankNetRanker(BaseEstimator, RegressorMixin):
 
     def predict(self, X):
         X = X.astype(np.float32)
+        X = self.std.transform(X)
         return self.net.predict(X)
 
 
@@ -85,6 +94,7 @@ if __name__ == '__main__':
     # X, y = make_classification()
     X, y = make_regression(random_state=0)
     r = RankNetRanker()
+    # r = XGBRegressor('rank:pairwise', n_jobs=1)
     # r = XGBRegressor()
     x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
     r.fit(x_train, y_train)
