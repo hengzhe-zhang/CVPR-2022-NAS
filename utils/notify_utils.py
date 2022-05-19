@@ -5,8 +5,9 @@ import requests
 
 
 def send_message(message):
-    url = f'http://127.0.0.1:5010/notify?message={message}'
-    requests.get(url)
+    pass
+    # url = f'http://127.0.0.1:5010/notify?message={message}'
+    # requests.get(url)
 
 
 def exit_handler():

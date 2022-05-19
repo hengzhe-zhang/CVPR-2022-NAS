@@ -8,7 +8,7 @@ from xgboost import XGBRegressor
 from base_component.evolutionary_forest_plus import EvolutionaryForestRegressorPlus
 from dataset_loader import *
 from utils.notify_utils import notify
-from xgb_prediction import CatBoostPairwiseRanker
+from training_prediction import CatBoostPairwiseRanker
 
 pairwise_xgb = CatBoostPairwiseRanker(n_estimators=50, max_depth=1, loss_function='PairLogit',
                                       thread_count=1, learning_rate=0.9, verbose=False)
