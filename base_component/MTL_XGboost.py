@@ -1,7 +1,7 @@
 import numpy as np
 from xgboost import XGBRanker
 
-from gp_nas_prediction import GPNASRegressor
+from base_component.gpnas import GPNASRegressor
 
 
 class XGBRankerRegressor(XGBRanker):

@@ -4,6 +4,51 @@
 每个任务有一组超参数组合可以实现最优
 那么最好的方案就是按照任务进行超参数组合
 """
+history_best_parameters_xgb_cat_history = {
+    'A': [
+        {'XGB_n_estimators': 974, 'XGB_reg_lambda': 1.7586845153857581e-06, 'XGB_alpha': 0.30032815253176803,
+         'XGB_gamma': 0.004098802249027129, 'XGB_min_child_weight': 8.702018333814918, 'XGB_eta': 0.0003873905578386253,
+         'XGB_max_depth': 1, 'Cat_depth': 2, 'Cat_iterations': 512, 'Cat_learning_rate': 0.04388976283116414,
+         'Cat_l2_leaf_reg': 0.0995108176371209, 'XGB_booster': 'dart', 'XGB_objective': 'rank:pairwise',
+         'Cat_loss_function': 'PairLogit'},
+        {'XGB_n_estimators': 936, 'XGB_reg_lambda': 843.3802866312365, 'XGB_alpha': 52.411225426632804,
+         'XGB_gamma': 0.32300538405560636, 'XGB_min_child_weight': 2.0691265106849697,
+         'XGB_eta': 4.6111222131766045e-06,
+         'XGB_max_depth': 3, 'Cat_depth': 1, 'Cat_iterations': 512, 'Cat_learning_rate': 0.9974033554340588,
+         'Cat_l2_leaf_reg': 0.03379793955759339, 'XGB_booster': 'dart', 'XGB_objective': 'rank:pairwise',
+         'Cat_loss_function': 'PairLogit'},
+        {'XGB_n_estimators': 891, 'XGB_reg_lambda': 1.223591912089722, 'XGB_alpha': 6.708897594247115e-06,
+         'XGB_gamma': 0.32338636505358076, 'XGB_min_child_weight': 3.1742365458735406, 'XGB_eta': 0.008206745665864051,
+         'XGB_max_depth': 2, 'Cat_depth': 1, 'Cat_iterations': 846, 'Cat_learning_rate': 0.9154530985402358,
+         'Cat_l2_leaf_reg': 107.36996723658726, 'XGB_booster': 'dart', 'XGB_objective': 'rank:pairwise',
+         'Cat_loss_function': 'PairLogit'},
+        {'XGB_n_estimators': 806, 'XGB_reg_lambda': 1.962146240903126e-06, 'XGB_alpha': 0.25244495693396646,
+         'XGB_gamma': 0.47294482880708233, 'XGB_min_child_weight': 5.798554933752596, 'XGB_eta': 0.1686563255511412,
+         'XGB_max_depth': 2, 'Cat_depth': 1, 'Cat_iterations': 988, 'Cat_learning_rate': 0.9992969391105277,
+         'Cat_l2_leaf_reg': 1.926267539306417e-06, 'XGB_booster': 'gbtree', 'XGB_objective': 'rank:pairwise',
+         'Cat_loss_function': 'PairLogit'},
+        {'XGB_n_estimators': 753, 'XGB_reg_lambda': 3.7644884263493882e-06, 'XGB_alpha': 1.220585218724038e-06,
+         'XGB_gamma': 0.3938337542632485, 'XGB_min_child_weight': 0.14785835206923958, 'XGB_eta': 0.9820987566927986,
+         'XGB_max_depth': 1, 'Cat_depth': 2, 'Cat_iterations': 649, 'Cat_learning_rate': 0.8814635012928841,
+         'Cat_l2_leaf_reg': 1.348259459007019e-06, 'XGB_booster': 'gbtree', 'XGB_objective': 'rank:pairwise',
+         'Cat_loss_function': 'PairLogit'},
+        {'XGB_n_estimators': 122, 'XGB_reg_lambda': 0.1103401066782876, 'XGB_alpha': 1.9856517230199754e-06,
+         'XGB_gamma': 0.4585353765736615, 'XGB_min_child_weight': 6.751376341203246, 'XGB_eta': 3.3305820068514544e-07,
+         'XGB_max_depth': 2, 'Cat_depth': 1, 'Cat_iterations': 901, 'Cat_learning_rate': 0.6208797781327386,
+         'Cat_l2_leaf_reg': 4.373794086398956e-06, 'XGB_booster': 'dart', 'XGB_objective': 'rank:pairwise',
+         'Cat_loss_function': 'PairLogit'},
+        {'XGB_n_estimators': 189, 'XGB_reg_lambda': 209.1371399869803, 'XGB_alpha': 0.0032145584325025205,
+         'XGB_gamma': 0.33909955229829913, 'XGB_min_child_weight': 7.1924538113197025, 'XGB_eta': 6.347677850296091e-07,
+         'XGB_max_depth': 2, 'Cat_depth': 1, 'Cat_iterations': 459, 'Cat_learning_rate': 0.993108575801039,
+         'Cat_l2_leaf_reg': 810.749017181103, 'XGB_booster': 'gbtree', 'XGB_objective': 'rank:pairwise',
+         'Cat_loss_function': 'PairLogit'},
+        {'XGB_n_estimators': 771, 'XGB_reg_lambda': 0.00013912095707034757, 'XGB_alpha': 2.9891976377113916,
+         'XGB_gamma': 0.4990184860892782, 'XGB_min_child_weight': 1.0625286406400722, 'XGB_eta': 0.5442920437566168,
+         'XGB_max_depth': 1, 'Cat_depth': 3, 'Cat_iterations': 560, 'Cat_learning_rate': 0.9370570885402213,
+         'Cat_l2_leaf_reg': 0.003327812066992221, 'XGB_booster': 'gbtree', 'XGB_objective': 'rank:pairwise',
+         'Cat_loss_function': 'PairLogit'},
+    ]
+}
 
 history_best_parameters_catboost_history = {
     'A': [
@@ -128,6 +173,9 @@ CatBoost基准
 CatBoost XGBoost融合
 0.79756	
 0.31494	0.88332	0.90642	0.96271	0.91296	0.67079	0.92233	0.80702
+XGB-Cat Stacking
+0.79386	
+0.30482	0.88094	0.89603	0.96443	0.9136	0.67077	0.9205	0.79983
 """
 history_best_parameters_catboost = [
     history_best_parameters_catboost_history['A'][0],

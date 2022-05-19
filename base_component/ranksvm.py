@@ -1,32 +1,25 @@
+"""
+RankSVM 核心框架
+"""
 import itertools
 
 import numpy as np
+from evolutionary_forest.forest import spearman
 from sklearn import svm
 from sklearn.base import RegressorMixin
+from sklearn.datasets import make_regression
+from sklearn.linear_model import LogisticRegression, LinearRegression, LogisticRegressionCV
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import LinearSVC
+
+from base_component.gpnas import GPNASRegressor
+from utils.learning_utils import kendalltau
 
 
-def transform_pairwise(X, y):
-    """Transforms data into pairs with balanced labels for ranking
-    Transforms a n-class ranking problem into a two-class classification
-    problem. Subclasses implementing particular strategies for choosing
-    pairs should override this method.
-    In this method, all pairs are choosen, except for those that have the
-    same target value. The output is an array of balanced classes, i.e.
-    there are the same number of -1 as +1
-    Parameters
-    ----------
-    X : array, shape (n_samples, n_features)
-        The data
-    y : array, shape (n_samples,) or (n_samples, 2)
-        Target labels. If it's a 2D array, the second column represents
-        the grouping of samples, i.e., samples with different groups will
-        not be considered.
-    Returns
-    -------
-    X_trans : array, shape (k, n_feaures)
-        Data as pairs
-    y_trans : array, shape (k,)
-        Output class labels, where classes have values {-1, +1}
+def transform_pairwise(X: np.ndarray, y: np.ndarray):
+    """
+    构造Pairwise数据集
     """
     X_new = []
     y_new = []
@@ -47,24 +40,10 @@ def transform_pairwise(X, y):
     return np.asarray(X_new), np.asarray(y_new).ravel()
 
 
-class RankSVM(RegressorMixin, svm.LinearSVC):
-    """Performs pairwise ranking with an underlying LinearSVC model
-    Input should be a n-class ranking problem, this object will convert it
-    into a two-class classification problem, a setting known as
-    `pairwise ranking`.
-    See object :ref:`svm.LinearSVC` for a full description of parameters.
-    """
-
-    def fit(self, X, y):
+class RankSVM(RegressorMixin, LogisticRegressionCV):
+    def fit(self, X, y, **kwargs):
         """
-        Fit a pairwise ranking model.
-        Parameters
-        ----------
-        X : array, shape (n_samples, n_features)
-        y : array, shape (n_samples,) or (n_samples, 2)
-        Returns
-        -------
-        self
+        构造Pairwise数据集
         """
         X_trans, y_trans = transform_pairwise(X, y)
         super(RankSVM, self).fit(X_trans, y_trans)
@@ -72,25 +51,27 @@ class RankSVM(RegressorMixin, svm.LinearSVC):
 
     def predict(self, X):
         """
-        Predict an ordering on X. For a list of n samples, this method
-        returns a list from 0 to n-1 with the relative order of the rows of X.
-        Parameters
-        ----------
-        X : array, shape (n_samples, n_features)
-        Returns
-        -------
-        ord : array, shape (n_samples,)
-            Returns a list of integers representing the relative order of
-            the rows in X.
+        尝试利用参数进行预测
         """
         if hasattr(self, 'coef_'):
-            return np.argsort(np.dot(X, self.coef_.flatten()))
+            return np.dot(X, self.coef_.flatten())
         else:
             raise ValueError("Must call fit() prior to predict()")
 
-    def score(self, X, y):
+    def score(self, X, y, **kwargs):
         """
-        Because we transformed into a pairwise problem, chance level is at 0.5
+        评分函数
         """
         X_trans, y_trans = transform_pairwise(X, y)
-        return np.mean(super(RankSVM, self).predict(X_trans) == y_trans)
+        return kendalltau(super(RankSVM, self).predict(X_trans), y_trans)
+
+
+if __name__ == '__main__':
+    X, y = make_regression(random_state=0)
+    for rt in [0.2, 0.5, 0.8]:
+        r = GPNASRegressor(rt)
+        # r = LinearRegression()
+        # X = StandardScaler().fit_transform(X)
+        x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
+        r.fit(x_train, y_train)
+        print(kendalltau(y_test, r.predict(x_test)))

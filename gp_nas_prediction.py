@@ -39,20 +39,6 @@ def task(c_flag=2, m_flag=2):
     print(c_flag, m_flag, np.mean(all_score))
 
 
-class GPNASRegressor(GPNAS):
-    def fit(self, X_train_k, Y_train_k):
-        self.X_train_k = X_train_k
-        self.Y_train_k = Y_train_k
-        self.get_initial_mean(X_train_k[0::2], Y_train_k[0::2])
-        self.get_initial_cov(X_train_k)
-        # 更新（训练）gpnas预测器超参数
-        self.get_posterior_mean(X_train_k[1::2], Y_train_k[1::2])
-        return self
-
-    def predict(self, X):
-        return self.get_predict_jiont(X, self.X_train_k[::1], self.Y_train_k[::1])
-
-
 if __name__ == '__main__':
     for a in [1, 2]:
         for b in [1, 2]:

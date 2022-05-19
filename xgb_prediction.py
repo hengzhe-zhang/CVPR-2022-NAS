@@ -1,43 +1,44 @@
-import copy
 import os
 
 import dill
-import numpy as np
 import ray
-from catboost import CatBoostRanker
 from evolutionary_forest.forest import EvolutionaryForestRegressor
 from evolutionary_forest.utils import get_feature_importance, feature_append
-from gplearn.genetic import SymbolicRegressor, SymbolicTransformer
+from gplearn.genetic import SymbolicTransformer
 from lightgbm import LGBMRanker
 from scipy.stats import rankdata
 from sklearn.base import RegressorMixin
 from sklearn.decomposition import PCA
 from sklearn.ensemble import VotingRegressor, BaggingRegressor
-from sklearn.linear_model import LinearRegression
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, Matern, Exponentiation, DotProduct
+from sklearn.linear_model import LinearRegression, LassoCV
 from sklearn.metrics import make_scorer
-from sklearn.model_selection import cross_val_score, KFold, cross_val_predict
-from sklearn.neighbors import KNeighborsRegressor
+from sklearn.model_selection import cross_val_score, KFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import PolynomialFeatures
-from sklearn.svm import SVR
 from xgboost import XGBRegressor, XGBRanker
-
-from base_component import XGBCatStacking
-from base_component.KNN_LTR import KNNLTR
+from sklearn.gaussian_process.kernels import PairwiseKernel
 
 from base_component.RankNet import RankNetRanker
-from base_component.XGBCatStacking import CatBoostPairwiseRanker, XCSkatingRanker
+from base_component.XGBCatStacking import CatBoostPairwiseRanker, XCSkatingRanker, RankerNormalizer
+from base_component.RankNetPD import RankNetPaddle
+from base_component.gpnas import GPNASRegressor, BaggingGP
 from dataset_loader import *
 # 加载训练集
-from hyperparameters import history_best_parameters, history_best_parameters_catboost
+from hyperparameters import history_best_parameters, history_best_parameters_catboost, \
+    history_best_parameters_xgb_cat_history
 from utils.learning_utils import sklearn_tuner, kendalltau
 from utils.notify_utils import notify
 
 os.environ['OMP_NUM_THREADS'] = "1"
 os.environ['MKL_NUM_THREADS'] = "1"
 os.environ['NUMEXPR_NUM_THREADS'] = "1"
-# use_xgboost = 'XGB'
-use_xgboost = 'XC'
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+
+# use_xgboost = 'GPNAS'
+use_xgboost = 'RankNet'
 
 xgb_search_space = [
     {'name': 'booster', 'type': 'cat', 'categories': ['gbtree', 'dart']},
@@ -94,8 +95,30 @@ xc_params = [
     {'name': 'Cat_learning_rate', 'type': 'pow', 'lb': 1e-3, 'ub': 1},
     {'name': 'Cat_l2_leaf_reg', 'type': 'pow', 'lb': 1e-6, 'ub': 1e3},
     {'name': 'Cat_loss_function', 'type': 'cat', 'categories': ['PairLogit']},
+    {'name': 'full_stack', 'type': 'cat', 'categories': [True]},
 ]
 
+gpnas_params = [
+    {'name': 'c_flag', 'type': 'cat', 'categories': [1, 2]},
+    {'name': 'm_flag', 'type': 'cat', 'categories': [1, 2]},
+    {'name': 'ratio', 'type': 'num', 'lb': 0.05, 'ub': 0.95},
+    {'name': 'hp_mat', 'type': 'pow', 'lb': 1e-8, 'ub': 1e-5},
+    {'name': 'hp_cov', 'type': 'pow', 'lb': 1e-4, 'ub': 1e-1},
+]
+
+ranknet_params = [
+    {'name': 'batch_size', 'type': 'pow', 'lb': 16, 'ub': 512},
+    {'name': 'l2_regularization', 'type': 'num', 'lb': 1e-5, 'ub': 1e-1},
+    {'name': 'learning_rate', 'type': 'pow', 'lb': 1e-5, 'ub': 1e-1},
+    {'name': 'number_of_hidden_layer', 'type': 'pow', 'lb': 64, 'ub': 512},
+    {'name': 'hidden_layer_size', 'type': 'int', 'lb': 1, 'ub': 5},
+    {'name': 'dropout_rate', 'type': 'num', 'lb': 0, 'ub': 1},
+    {'name': 'epochs', 'type': 'int', 'lb': 50, 'ub': 200},
+]
+
+gp_params = [
+    {'name': 'kernel', 'type': 'cat', 'categories': ['DotProduct', 'Exponentiation', 'Matern', 'RBF', 'PairwiseKernel']}
+]
 """
 超参数搜索结果
 基准平均分 0.77589898989899
@@ -145,7 +168,7 @@ def simple_cv_task(fe=False, custom_fe=False, final_prediction=True):
     """
     交叉验证测试
     """
-    core_class = XGBRegressor if use_xgboost else CatBoostPairwiseRanker
+    core_class = CatBoostPairwiseRanker
     # 特征构造之后平均分 0.7511313131313132
     # 平均分 0.7517373737373738
     ef = EvolutionaryForestRegressor(max_height=5, normalize=False, select='AutomaticLexicase',
@@ -170,8 +193,7 @@ def simple_cv_task(fe=False, custom_fe=False, final_prediction=True):
             print('number of features', len(code_importance_dict))
             X_all_k = feature_append(ef, X_all_k,
                                      list(code_importance_dict.keys())[:top_features],
-                                     only_new_features=False)
-        # BaggingRegressor(XGBRegressor(**history_best_parameters[i]), n_jobs=-1).fit(X_all_k, Y_all_k).predict(X_all_k)
+                                     only_new_features=True)
         score = np.mean(cross_val_score(
             core_class(**history_best_parameters_catboost[i]),
             X_all_k, Y_all_k, cv=KFold(shuffle=True),
@@ -228,6 +250,8 @@ def tuning_task(tuning=True, semi_supervised=False):
             'XGB': XGBRegressor,
             'Cat': CatBoostPairwiseRanker,
             'XC': XCSkatingRanker,
+            'GPNAS': BaggingGP,
+            'RankNet': RankNetPaddle,
         }[use_xgboost]
         if tuning:
             """
@@ -244,11 +268,13 @@ def tuning_task(tuning=True, semi_supervised=False):
                 'XGB': xgb_search_space,
                 'Cat': catboost_params,
                 'XC': xc_params,
+                'GPNAS': gpnas_params,
+                'RankNet': ranknet_params,
             }[use_xgboost]
             multi_objective = False
             best_parameter = sklearn_tuner(core_class, search_space, X_all_k, Y_all_k,
                                            metric=kendalltau,
-                                           max_iter=5, multi_objective=multi_objective)
+                                           max_iter=8, multi_objective=multi_objective)
             print(best_parameter)
             if multi_objective:
                 model = VotingRegressor(parameters_to_xgb(best_parameter))
@@ -273,24 +299,42 @@ def tuning_task(tuning=True, semi_supervised=False):
                 X_all_k = np.concatenate([X_all_k, np.array(test_arch_list)], axis=0)
                 Y_all_k = np.concatenate([Y_all_k, np.full(test_arch_list.shape[0], -1)], axis=0)
             parameter = history_best_parameters_catboost[i]
-            # base = core_class(**parameter)
-            # base = RankNetRanker()
-            # base = GPLTR(n_components=1, metric='spearman',
-            #              function_set=('add', 'sub', 'mul', 'div', 'sqrt', 'log', 'max', 'min', 'abs'))
-            base = RankNetRanker()
             # ### 非常精细的调参
-            # if i in [2, 3, 5, 6]:
-            #     base = core_class(**parameter)
+
+            if i in [2, 6]:
+                # 3,5
+                base = CatBoostPairwiseRanker(**parameter)
+            elif i in [1, 4]:
+                base = VotingRegressor([
+                    ('A', RankerNormalizer(CatBoostPairwiseRanker(**parameter))),
+                    ('C', RankerNormalizer(XCSkatingRanker(**history_best_parameters_xgb_cat_history['A'][i]))),
+                ])
+            elif i in [3]:
+                # 3,4
+                base = XCSkatingRanker(**history_best_parameters_xgb_cat_history['A'][i])
+            elif i in [5, 7]:
+                base = VotingRegressor([
+                    ('A', RankerNormalizer(CatBoostPairwiseRanker(**parameter))),
+                    ('B', RankerNormalizer(XGBRegressor(**history_best_parameters['A'][i]))),
+                    ('C', RankerNormalizer(XCSkatingRanker(**history_best_parameters_xgb_cat_history['A'][i]))),
+                ])
             # else:
             #     base = VotingRegressor([
-            #         ('A', core_class(**parameter)),
+            #         ('A', CatBoostPairwiseRanker(**parameter)),
             #         ('B', XGBRegressor(**history_best_parameters['A'][i])),
             #     ])
+            # base = RankNetRanker()
             if semi_supervised:
                 mean_score = semi_supervised_score_evaluation(base, X_all_k, Y_all_k)
             else:
-                cv_prediction = cross_val_score(base, X_all_k, Y_all_k, cv=KFold(shuffle=True), n_jobs=5)
+                # for k in [DotProduct(), Matern(), RBF(), PairwiseKernel(metric='rbf')]:
+                #     Y_all_k = Y_all_k - Y_all_k.mean() / Y_all_k.std()
+                #     base = GaussianProcessRegressor(k)
+                cv_prediction = cross_val_score(base, X_all_k, Y_all_k, cv=KFold(shuffle=True), n_jobs=5,
+                                                scoring=make_scorer(kendalltau))
+                print(np.mean(cv_prediction))
                 mean_score = np.mean(cv_prediction)
+                # mean_score = np.mean(kendalltau(cv_prediction, Y_all_k))
             scores.append(mean_score)
             print('XGBRanker', mean_score)
             xgb = base.fit(X_all_k, Y_all_k)
@@ -365,6 +409,26 @@ CatBoost结果
 任务 0.6655353535353535
 任务 0.9155555555555559
 任务 0.7915959595959596
+
+XGB-Cat-Stacking结果
+任务 0.266989898989899
+任务 0.7200000000000001
+任务 0.8951919191919193
+任务 0.9606464646464647
+任务 0.896888888888889
+任务 0.6645656565656567
+任务 0.9111919191919193
+任务 0.7920808080808082
+
+二阶特征+Lasso
+任务 0.24557575757575761
+任务 0.7522424242424244
+任务 0.7410909090909092
+任务 0.8243232323232326
+任务 0.6886464646464647
+任务 0.48307070707070715
+任务 0.7241212121212123
+任务 0.751919191919192
 """
 
 
@@ -400,7 +464,7 @@ def semi_supervised_score_evaluation(model, X_all_k, Y_all_k):
 @ray.remote
 def single_fold(model, id, X_all_k, Y_all_k):
     train_id, test_id = id
-    ranker = model.fit(X_all_k[train_id], Y_all_k[train_id])
+    ranker = model.fit(X_all_k[train_id], Y_all_k[train_id], )
     index = Y_all_k[test_id] != -1
     score = kendalltau(Y_all_k[test_id][index], ranker.predict(X_all_k[test_id][index]))
     return score
@@ -416,7 +480,7 @@ def score_evaluation(model, X_all_k, Y_all_k, qid_all):
     for id in KFold(5, shuffle=True).split(X_all_k):
         train_id, test_id = id
         # QID代表了任务编号
-        ranker = model.fit(X_all_k[train_id], Y_all_k[train_id], qid=qid_all[train_id])
+        ranker = model.fit(X_all_k[train_id], Y_all_k[train_id], )
         for id in np.unique(qid_all[test_id]):
             index = qid_all[test_id] == id
             score = kendalltau(Y_all_k[test_id][index], ranker.predict(X_all_k[test_id][index]))
@@ -430,8 +494,8 @@ def score_evaluation(model, X_all_k, Y_all_k, qid_all):
 """
 
 if __name__ == '__main__':
-    # tuning_task(tuning=False)
-    tuning_task(tuning=True)
+    tuning_task(tuning=False)
+    # tuning_task(tuning=True)
     # simple_cv_task(fe=True)
     # ef_prediction()
     # joint_training_task()

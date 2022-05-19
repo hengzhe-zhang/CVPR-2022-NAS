@@ -10,15 +10,15 @@ from dataset_loader import *
 from utils.notify_utils import notify
 from xgb_prediction import CatBoostPairwiseRanker
 
-pairwise_xgb = CatBoostPairwiseRanker(n_estimators=30, max_depth=1, loss_function='PairLogit',
+pairwise_xgb = CatBoostPairwiseRanker(n_estimators=50, max_depth=1, loss_function='PairLogit',
                                       thread_count=1, learning_rate=0.9, verbose=False)
 
-ef = EvolutionaryForestRegressorPlus(max_height=8, normalize=False, select='Tournament-7',
-                                     gene_num=3, boost_size=10, n_gen=10, n_pop=100,
+ef = EvolutionaryForestRegressorPlus(max_height=3, normalize=False, select='Tournament-7',
+                                     gene_num=10, boost_size=10, n_gen=10, n_pop=100,
                                      cross_pb=0.9, mutation_pb=0.1,
                                      # base_learner='Random-DT',
                                      base_learner=pairwise_xgb,
-                                     verbose=True, n_process=60,
+                                     verbose=True, n_process=58,
                                      original_features=True)
 
 

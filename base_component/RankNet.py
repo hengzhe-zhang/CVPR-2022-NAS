@@ -12,6 +12,7 @@ from skorch import NeuralNetRegressor
 from skorch.callbacks import EarlyStopping
 from torch import nn, Tensor
 from torch.nn.modules.loss import _Loss, BCEWithLogitsLoss
+from xgboost import XGBRegressor
 
 
 class ClassifierModule(nn.Module):
@@ -20,18 +21,21 @@ class ClassifierModule(nn.Module):
             input_dim,
             hidden_dim=16,
             output_dim=1,
-            dropout=0.75,
+            dropout=0.5,
     ):
         super(ClassifierModule, self).__init__()
         self.dropout = nn.Dropout(dropout)
         self.hidden = nn.Linear(input_dim, hidden_dim)
         self.hidden2 = nn.Linear(hidden_dim, hidden_dim)
+        self.hidden3 = nn.Linear(hidden_dim, hidden_dim)
         self.output = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, X, **kwargs):
         X = F.relu(self.hidden(X))
         X = self.dropout(X)
         X = F.relu(self.hidden2(X))
+        X = self.dropout(X)
+        X = F.relu(self.hidden3(X))
         X = self.dropout(X)
         X = self.output(X).squeeze(-1)
         return X
@@ -71,14 +75,14 @@ class RankNetRanker(BaseEstimator, RegressorMixin):
         y = StandardScaler().fit_transform(y)
         net = NeuralNetRegressor(
             ClassifierModule,
-            max_epochs=200,
+            max_epochs=2000,
             criterion=RankNetLoss,
             lr=0.01,
             device=device,
             optimizer=torch.optim.Adam,
-            callbacks=[EarlyStopping(patience=50)],
+            callbacks=[EarlyStopping(patience=200)],
             module__input_dim=X.shape[1],
-            verbose=True
+            verbose=False
         )
         net.fit(X, y)
         self.net = net
@@ -96,6 +100,7 @@ if __name__ == '__main__':
     r = RankNetRanker()
     # r = XGBRegressor('rank:pairwise', n_jobs=1)
     # r = XGBRegressor()
-    x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
-    r.fit(x_train, y_train)
-    print(spearman(y_test, r.predict(x_test)))
+    for r in [RankNetRanker()]:
+        x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
+        r.fit(x_train, y_train)
+        print(spearman(y_test, r.predict(x_test)))

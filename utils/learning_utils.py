@@ -26,7 +26,7 @@ def score_evaluation(model, X_all_k, Y_all_k):
     scores = []
     for id in KFold(5).split(X_all_k):
         train_id, test_id = id
-        ranker = model.fit(X_all_k[train_id], Y_all_k[train_id])
+        ranker = model.fit(X_all_k[train_id], Y_all_k[train_id], )
         scores.append(kendalltau(Y_all_k[test_id], ranker.predict(X_all_k[test_id])))
     return np.mean(np.array(scores))
 
@@ -54,12 +54,12 @@ def sklearn_tuner(
         n_splits=5,
         max_iter=16,
         report=False,
-        multi_objective=True
+        multi_objective=False
 ) -> (dict, pd.DataFrame):
     """
     基于HEBO的调参工具类
     """
-    n_suggestions = (os.cpu_count() - 8) // n_splits
+    n_suggestions = (os.cpu_count() - 10) // n_splits
     ray.init(num_cpus=n_suggestions, _node_ip_address='127.0.0.1')
     pool = ProcessingPool(n_suggestions)
     space = DesignSpace().parse(space_config)
@@ -76,6 +76,9 @@ def sklearn_tuner(
         scores = ray.get([simple_cross_validation.remote(X_id, y_id, model_class, r[1].to_dict(), metric, n_splits,
                                                          multi_objective)
                           for r in rec.iterrows()])
+        # scores = [simple_cross_validation(X, y, model_class, r[1].to_dict(), metric, n_splits,
+        #                                   multi_objective)
+        #           for r in rec.iterrows()]
         opt.observe(rec, sign * np.array(scores))
         print('Iter %d, best metric: %g' % (i, sign * opt.y.min()))
     pool.close()
@@ -100,13 +103,8 @@ def simple_cross_validation(X, y, model_class, parameter, metric, n_splits, mult
     """
     调参交叉验证工具类
     """
-    # print('start single task!')
-    # X, y, model_class, parameter, metric, n_splits = parameters
     all_score = []
     model = model_class(**parameter)
-    # pred = cross_val_predict(model, X, y, cv=KFold(n_splits=n_splits, shuffle=True), n_jobs=-1)
-    # # Warning: 不同Batch的结果不可比
-    # score_v = np.nan_to_num(metric(y, pred))
     score_v = cross_val_score(model, X, y, cv=KFold(n_splits=n_splits, shuffle=True), n_jobs=n_splits,
                               scoring=make_scorer(kendalltau))
     all_score.append(np.mean(score_v))
