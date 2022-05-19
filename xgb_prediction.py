@@ -318,11 +318,11 @@ def tuning_task(tuning=True, semi_supervised=False):
                     ('B', RankerNormalizer(XGBRegressor(**history_best_parameters['A'][i]))),
                     ('C', RankerNormalizer(XCSkatingRanker(**history_best_parameters_xgb_cat_history['A'][i]))),
                 ])
-            # else:
-            #     base = VotingRegressor([
-            #         ('A', CatBoostPairwiseRanker(**parameter)),
-            #         ('B', XGBRegressor(**history_best_parameters['A'][i])),
-            #     ])
+            else:
+                base = VotingRegressor([
+                    ('A', CatBoostPairwiseRanker(**parameter)),
+                    ('B', XGBRegressor(**history_best_parameters['A'][i])),
+                ])
             # base = RankNetRanker()
             if semi_supervised:
                 mean_score = semi_supervised_score_evaluation(base, X_all_k, Y_all_k)
